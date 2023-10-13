@@ -1,0 +1,3 @@
+[Not working] Dashboard Grafana de metriques.
+Le Dashboard est supposé être deployé a l'aide de gitlab-ci.yml
+

@@ -1,0 +1,224 @@
+variables:
+  CI_USER: "new"
+  PYTHON3_IMAGE: python:3.8-alpine
+  VERSION: ${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}
+  TF_VAR_environment: default
+  TF_VAR_USER: ${GITLAB_USER_NAME}
+  TF_VAR_COMMIT: ${CI_COMMIT_SHORT_SHA}
+  TF_VAR_BRANCH: ${CI_COMMIT_BRANCH}
+  TFDIR: terraform
+  TF_INPUT: 0 
+  PLAN: ${CI_COMMIT_SHORT_SHA}-${TF_VAR_environment}.tfplan
+  AWS_DEFAULT_REGION: us-east-1
+  ECR_REPO: 304757654481.dkr.ecr.us-east-1.amazonaws.com
+  DOCKER_HOST: tcp://docker:2375 
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+  VAULT_PASSWORD: "$VAULT_PASSWORD"
+  CI_DEBUG_FALSE: "true"
+
+
+image:
+  name: hashicorp/terraform:light
+
+  entrypoint:
+    - '/usr/bin/env'
+    - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+
+stages:
+  - infra_validate
+  - plan-apply
+  - build
+  - test-calculator
+  - performance-test
+  - security-scan-bandit
+  # - release
+  - deploy_validate
+  - deploy_plan_apply
+  - setup
+  - provisioning_ansible
+ #- monitoring
+
+infra-validate:
+  stage: infra_validate
+  before_script: 
+    - pwd
+    - chmod 755 -R /builds/elodie.ratovoherinjanahary/project_devops
+    - cd terraform
+    - rm -rf .terraform
+    - terraform --version
+
+  script:
+    - terraform init 
+    - terraform validate
+
+
+plan-apply:
+  stage: plan-apply
+  before_script: 
+    - chmod 755 -R /builds/elodie.ratovoherinjanahary/project_devops
+    - cd terraform
+    - terraform init 
+
+  script:
+    - terraform plan -out=${PLAN} -lock=false
+    - terraform apply -auto-approve -lock=false
+  dependencies:
+    - infra-validate
+
+  artifacts:
+    expire_in: 2 hrs
+    paths:
+      - ${TFDIR}/${PLAN}
+
+build:
+  stage : build
+  image: python:3.9-slim
+
+  # Install dependencies
+  before_script:
+    - apt-get update
+    - apt-get install -y python3
+
+  script:
+    - python3 application/calculator.py 1 2 3
+
+test-calculator:
+  stage : test-calculator
+  image: python:3.9-slim
+
+  before_script:
+    - apt-get update
+    - apt-get install -y python3
+
+  script:
+    - python3 -m unittest application.tests.test_calculator
+
+performance-test:
+  stage: performance-test
+  before_script:
+    - apk update
+    - apk add python3-dev py3-pip build-base linux-headers libffi-dev
+    - pip3 install locust
+    - - python3 --version 
+  script:
+    - locust -f application/tests/locust_perf.py --headless -u 5 -r 1 --run-time 30s --csv=performance
+
+  artifacts:
+    paths:
+      - performance_*
+
+security-scan:
+  stage: security-scan-bandit
+  image: python:3.9-slim
+  before_script:
+    - pip install bandit
+  script:
+    - bandit -r ./ --config application/tests/bandit.yml
+ 
+# release:
+#   stage: release
+#   image: docker:20.10.16
+#   allow_failure: false
+#   services:
+#     - docker:dind
+#   variables:
+#     DOCKER_TLS_CERTDIR: ""
+#     DOCKER_HOST: "tcp://docker:2375"
+#     # CI_DEBUG_TRACE: "true"
+#   before_script:
+#       - pwd
+#       - cd sonarqube
+#       - apk add --no-cache curl jq python3 py3-pip
+#       - pip install awscli
+#       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 304757654481.dkr.ecr.us-east-1.amazonaws.com
+
+
+#   script:
+#     - docker build -t sonarqube .
+#     - docker tag sonarqube:latest 304757654481.dkr.ecr.us-east-1.amazonaws.com/sonarqube:latest
+#     - docker push ${ECR_NAME}/sonarqube:latest
+
+
+deploy_validate:
+  stage: deploy_validate
+  before_script:
+    - export AWS_ACCESS_KEY=${AWS_ACCESS_KEY_ID}
+    - export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    - export AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+    - cd terraform/
+    - rm -rf .terraform
+    - terraform --version
+    - terraform init
+  script:
+    - terraform validate 
+  variables:
+    PLAN: ${CI_COMMIT_SHORT_SHA}-${TF_VAR_environment}-app.tfplan
+
+deploy_plan_apply:
+  stage: deploy_plan_apply
+  before_script:
+    # - pwd
+    - export AWS_ACCESS_KEY=${AWS_ACCESS_KEY_ID}
+    - export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    - export AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+    - cd terraform/
+    - rm -rf .terraform
+    - terraform --version
+    - terraform init
+  script:
+    - terraform plan -out=${PLAN} -lock=false
+    - terraform apply -auto-approve -lock=false
+
+  environment:
+    name: ${TF_VAR_environment}
+  allow_failure: false
+  dependencies:
+    - deploy_validate
+
+decrypt_vault:
+  stage: setup
+  image: registry.gitlab.com/torese/docker-ansible
+  before_script:
+    - cd ansible/inventories/group_vars
+    - pwd
+    - ls
+
+  script:
+    - echo "$VAULT_PASSWORD" > vault_password.txt  
+    - ansible-vault decrypt --vault-password-file=vault_password.txt vault.yaml
+
+
+
+run-playbook:
+  stage: provisioning_ansible
+  image: registry.gitlab.com/torese/docker-ansible
+  before_script:
+
+      - mkdir /root/.ssh
+      - ls
+      - cp $CI_CD_SSH_PRIVATE_KEY /root/.ssh/$CI_USER
+      - chmod 400 /root/.ssh/$CI_USER
+      - chmod 755 -R /builds/elodie.ratovoherinjanahary/project_devops
+      - chmod 644 /builds/elodie.ratovoherinjanahary/project_devops/ansible/ansible.cfg
+      - ansible --version
+         
+  script: 
+    
+    - pwd
+    - cd ansible
+    - python -V
+    - yum -y install python-pip
+    - pip --version
+    - pip install -r requirements.txt
+    - ansible --version
+    - ansible-playbook -i inventories/inv.ini playbook.yaml --key-file /root/.ssh/$CI_USER
+
+
+#deploy_grafana_dashboard:
+      #stage: monitoring
+      #image: curlimages/curl
+      #script:
+      # - 'curl -X POST -H "Content-Type: application/json" -d @Dashboard_Export.json http://localhost:3000/api/dashboards/db'
+

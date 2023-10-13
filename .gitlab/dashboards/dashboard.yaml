@@ -1,0 +1,9 @@
+title: Go heap size
+type: area-chart
+y_axis:
+  format: 'bytes'
+metrics:
+  - metric_id: 'go_memstats_alloc_bytes_1'
+    query_range: 'go_memstats_alloc_bytes'
+
+
