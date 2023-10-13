@@ -1,0 +1,22 @@
+---
+
+- hosts: vm_proxy
+  gather_facts: false
+  become: true
+  roles:
+    - role: haproxy
+
+- hosts: vm_apache
+  gather_facts: false
+  become: true
+  roles:
+    - apache
+
+- hosts: vm_app
+  gather_facts: false
+  become: true
+  roles:
+    - app
+
+
+

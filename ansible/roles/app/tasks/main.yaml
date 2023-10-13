@@ -1,0 +1,20 @@
+---
+
+- name: Install Git + Python
+  apt:
+    name:
+      - git
+      - python3
+      # - python3-pip
+    state: present
+  delegate_to: "{{groups['vm_proxy'] | first}}"
+
+
+- name: Copy project file
+  copy:
+    src: ../application
+    dest: /home/ubuntu/projet
+    owner: ubuntu
+    group: ubuntu
+  delegate_to: "{{groups['vm_proxy'] | first}}"
+

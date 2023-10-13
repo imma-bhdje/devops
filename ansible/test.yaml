@@ -1,0 +1,68 @@
+---
+- name: Install SonarQube
+  hosts: vm_apache
+  become: yes
+  vars:
+    sonarqube_version: "9.7.1.62043"
+    sonarqube_download_url: "https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-{{ sonarqube_version }}.zip"
+    sonarqube_install_dir: "/opt/sonarqube"
+  tasks:
+    - name: Install dependencies
+      apt:
+        name: openjdk-17
+        state: present
+      # with_items:
+      #   - openjdk-17-jdk 
+      #   - unzip
+
+    - name: Create SonarQube directory
+      file:
+        path: "{{ sonarqube_install_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: 0755
+
+    - name: Download SonarQube zip
+      get_url:
+        url: "{{ sonarqube_download_url }}"
+        dest: "{{ sonarqube_install_dir }}/sonarqube.zip"
+        mode: 0644
+
+    - name: Unzip SonarQube
+      unarchive:
+        src: "{{ sonarqube_install_dir }}/sonarqube.zip"
+        dest: "{{ sonarqube_install_dir }}"
+        remote_src: yes
+        mode: 0755
+        creates: "{{ sonarqube_install_dir }}/sonarqube-{{ sonarqube_version }}"
+
+    - name: Configure SonarQube
+      template:
+        src: sonar.properties.j2
+        dest: "{{ sonarqube_install_dir }}/sonarqube-{{ sonarqube_version }}/conf/sonar.properties"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: 0644
+      notify:
+        - Restart SonarQube
+
+    - name: Create SonarQube systemd service
+      template:
+        src: sonarqube.service.j2
+        dest: /etc/systemd/system/sonarqube.service
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: Enable and start SonarQube service
+      systemd:
+        name: sonarqube
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: Restart SonarQube
+      systemd:
+        name: sonarqube
+        state: restarted
